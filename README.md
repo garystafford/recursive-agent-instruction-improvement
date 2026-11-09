@@ -2,6 +2,8 @@
 
 Run a controlled study that changes a retail agent's instructions while keeping its model, tools, rules, and grader fixed. The runner measures a baseline, generates a revision from your run evidence, and compares both instruction versions on held-out synthetic cases. Each additional round gives the reviser the earlier instructions, executions, and revision attempts before evaluating on fresh cases.
 
+The published write-up covers two simulated retail studies. One compared Baseline, Revision 1, and Revision 2 across twelve distinct workflows. The other compared two independently drafted revisions with Baseline on held-out return-and-exchange cases. Both studies measured correctness, task time, and estimated model cost. [Recursive Self-Improvement Meets a Strong Baseline](https://blog.latentthoughts.com/recursive-self-improvement-meets-a-strong-baseline)
+
 For the experimental method behind the kit, see [Engineering Experiments: From Hypothesis to Understanding](https://blog.latentthoughts.com/from-hypothesis-to-understanding-a-practical-framework-for-applied-ai-engineering-experiments).
 
 ## Setup
