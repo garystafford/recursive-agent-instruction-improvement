@@ -1,0 +1,14 @@
+{
+  "development_cases": ["T06"],
+  "evaluation_rounds": [["T03", "T09"]],
+  "repetitions": 1,
+  "budget_usd": 10,
+  "task_model_allowance_usd": 0.8,
+  "hosting_allowance_usd_per_task": 0.2,
+  "pricing_usd_per_million": {
+    "input": null,
+    "cache_read": null,
+    "cache_write": null,
+    "output": null
+  }
+}

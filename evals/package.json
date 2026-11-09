@@ -1,0 +1,8 @@
+{
+  "name": "recursive-agent-instruction-improvement-grader",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "promptfoo": "0.125.1"
+  }
+}
