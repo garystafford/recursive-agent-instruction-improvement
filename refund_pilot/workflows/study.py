@@ -123,11 +123,13 @@ def evidence_for(attempt_id, version_id, record, verdict, target):
                 "setup_seconds",
                 "full_run_seconds",
                 "estimated_task_model_usd",
+                "task_model_cost_range_usd",
                 "usage",
                 "llm_calls",
                 "tool_calls",
                 "business_tool_calls",
                 "approval_calls",
+                "command_tool_calls",
             )
         },
     }
@@ -165,6 +167,10 @@ def prepare_revision(target, prompt, package):
     save(target / "state.json", {"status": "prepared", "request_sha256": revision.sha(args)})
 
 
+def total_cost_range(metrics):
+    return [sum(row["task_model_cost_range_usd"][bound] for row in metrics) for bound in (0, 1)]
+
+
 def summarize(attempts, revision_costs, hosting):
     grouped = {}
     for phase, attempt in attempts:
@@ -175,6 +181,7 @@ def summarize(attempts, revision_costs, hosting):
         metrics = [a["metrics"] for a in group]
         passes = sum(a["correctness_results"]["success"] for a in group)
         cost = sum(row["estimated_task_model_usd"] for row in metrics)
+        cost_range = total_cost_range(metrics)
         summaries.append(
             {
                 "phase": phase,
@@ -183,7 +190,12 @@ def summarize(attempts, revision_costs, hosting):
                 "passed": passes,
                 "median_task_seconds": statistics.median(row["task_seconds"] for row in metrics),
                 "mean_task_model_usd": cost / len(group),
+                "mean_task_model_usd_range": [bound / len(group) for bound in cost_range],
                 "task_model_usd_per_success": cost / passes if passes else None,
+                "task_model_usd_per_success_range": (
+                    [bound / passes for bound in cost_range] if passes else None
+                ),
+                "command_tool_calls": sum(row["command_tool_calls"] for row in metrics),
             }
         )
     comparisons = []
@@ -230,6 +242,13 @@ def summarize(attempts, revision_costs, hosting):
                         "change_percent": point,
                         "paired_95_percent_interval": interval,
                     }
+                before_low, before_high = total_cost_range([a["metrics"] for a in left])
+                after_low, after_high = total_cost_range([a["metrics"] for a in right])
+                change["estimated_task_model_usd"]["cache_write_change_percent_range"] = (
+                    [100 * (after_low / before_high - 1), 100 * (after_high / before_low - 1)]
+                    if before_low > 0
+                    else None
+                )
                 comparisons.append(change)
     equal_case_changes = []
     by_comparison = {(row["phase"], row["candidate"], row["reference"]) for row in comparisons}
@@ -301,10 +320,10 @@ async def run(directory, config):
                 raise RuntimeError(
                     f"Incomplete execution in {path}; its reservation remains unresolved"
                 )
-            cost = record["estimated_task_model_usd"]
+            cost = record["task_model_cost_range_usd"][1]
             accounted += cost + config.hosting_allowance_usd_per_task
             if cost > config.task_model_allowance_usd:
-                raise RuntimeError(f"Observed cost exceeded the task allowance in {path}")
+                raise RuntimeError(f"Upper cost estimate exceeded the task allowance in {path}")
             staged.append((version_id, {**record, "id": attempt_id}, path))
         # Saved verdicts keep the next revision payload stable when a process resumes.
         grades_file = target / "grades.json"
@@ -332,7 +351,7 @@ async def run(directory, config):
             "task_agent": {"model": hosted.MODEL, "effort": "low", "runtime": "openai_hosted"},
             "tool_catalog": catalog(),
             "decision_rules": "Preserve correctness and authorization. Apply the protocol's 5% tolerances. Treat small samples as inconclusive.",
-            "measurement": "Task time is submission through final response handling. Estimated task-model costs exclude hosting and revision. Tool counts here include MCP business and native approval calls. Hosted generation spans are a separate count.",
+            "measurement": "Task time is submission through final response handling. Task-model cost ranges cover missing cache-write counts and exclude hosting and revision. Tool counts cover MCP business calls, native approval calls, and hosted shell commands. Hosted generation spans are a separate count.",
         }
         package = {
             "fixed_study_context": context,
@@ -397,6 +416,9 @@ async def run(directory, config):
                 "passed",
                 "task_seconds",
                 "estimated_task_model_usd",
+                "task_model_cost_lower_usd",
+                "task_model_cost_upper_usd",
+                "command_tool_calls",
             ]
         )
         for phase, attempt in attempts:
@@ -409,6 +431,8 @@ async def run(directory, config):
                     attempt["correctness_results"]["success"],
                     attempt["metrics"]["task_seconds"],
                     attempt["metrics"]["estimated_task_model_usd"],
+                    *attempt["metrics"]["task_model_cost_range_usd"],
+                    attempt["metrics"]["command_tool_calls"],
                 ]
             )
     return directory / "summary.json"

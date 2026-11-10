@@ -134,32 +134,40 @@ class Measured:
         return Measured(value, self.timing, path)
 
 
+def trace_spans(rows):
+    return {
+        span["spanId"]: span
+        for row in rows
+        for resource in row["otlp"].get("resourceSpans", [])
+        for scope in resource.get("scopeSpans", [])
+        for span in scope["spans"]
+    }.values()
+
+
 def trace_usage(rows):
     def attrs(s):
         return {a["key"]: next(iter(a["value"].values())) for a in s.get("attributes", [])}
 
     agents = [
-        attrs(s)
-        for t in rows
-        for r in t["otlp"].get("resourceSpans", [])
-        for sc in r.get("scopeSpans", [])
-        for s in sc.get("spans", [])
-        if attrs(s).get("gen_ai.operation.name") == "invoke_agent"
+        a for a in map(attrs, trace_spans(rows)) if a.get("gen_ai.operation.name") == "invoke_agent"
     ]
     if not agents or any(
         "gen_ai.usage.input_tokens" not in a or "gen_ai.usage.output_tokens" not in a
         for a in agents
     ):
         raise ValueError("Root agent token usage is unavailable")
+    read_key = "gen_ai.usage.cache_read.input_tokens"
+    write_key = "gen_ai.usage.cache_write.input_tokens"
     return {
         "input_tokens": sum(int(a.get("gen_ai.usage.input_tokens", 0)) for a in agents),
         "output_tokens": sum(int(a.get("gen_ai.usage.output_tokens", 0)) for a in agents),
         "input_tokens_details": {
-            "cached_tokens": sum(
-                int(a.get("gen_ai.usage.cache_read.input_tokens", 0)) for a in agents
-            ),
-            "cache_write_tokens": sum(
-                int(a.get("gen_ai.usage.cache_write.input_tokens", 0)) for a in agents
+            "cached_tokens": sum(int(a.get(read_key, 0)) for a in agents),
+            "cache_write_tokens": sum(int(a.get(write_key) or 0) for a in agents),
+            "unclassified_input_tokens": sum(
+                int(a["gen_ai.usage.input_tokens"]) - int(a.get(read_key, 0))
+                for a in agents
+                if a.get(write_key) is None
             ),
         },
     }

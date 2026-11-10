@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from refund_pilot.workflows import transport
 from refund_pilot.workflows.cases import request_text
-from refund_pilot.workflows.costs import estimate
+from refund_pilot.workflows.costs import estimate, estimate_range
 from refund_pilot.workflows.qualification import ROOT, read_bundle, save
 from refund_pilot.workflows.service import WRITES, approval_decision, catalog
 
@@ -266,7 +266,8 @@ class Controller(StreamObserver):
         self.decisions = []
 
     def budget(self, data):
-        if data.get("usage") and estimate(data["usage"], self.pricing) >= self.model_allowance:
+        usage = data.get("usage")
+        if usage and estimate_range(usage, self.pricing)[1] >= self.model_allowance:
             raise RuntimeError("Per-task model allowance reached")
 
     async def approve(self, action):
@@ -395,24 +396,19 @@ async def download(client, sid, turn_id, target):
 
 
 def metrics(traces, journal, approvals, pricing):
-    spans = [
-        s
-        for row in traces
-        for resource in row["otlp"].get("resourceSpans", [])
-        for scope in resource.get("scopeSpans", [])
-        for s in scope["spans"]
-    ]
-    unique = {s["spanId"]: s for s in spans}.values()
+    unique = transport.trace_spans(traces)
     generations = sum(s["name"].startswith("chat ") for s in unique)
+    commands = sum(s["name"] == "execute_tool command_execution" for s in unique)
     usage = transport.trace_usage(traces)
-    cost = estimate(usage, pricing)
     return {
         "llm_calls": generations,
         "business_tool_calls": len(journal),
         "approval_calls": len(approvals),
-        "tool_calls": len(journal) + len(approvals),
+        "command_tool_calls": commands,
+        "tool_calls": len(journal) + len(approvals) + commands,
         "usage": usage,
-        "estimated_task_model_usd": cost,
+        "estimated_task_model_usd": estimate(usage, pricing),
+        "task_model_cost_range_usd": estimate_range(usage, pricing),
     }
 
 
@@ -434,6 +430,7 @@ async def task(target, case, instructions, pricing, model_allowance):
         "tool_calls": None,
         "business_tool_calls": None,
         "approval_calls": None,
+        "command_tool_calls": None,
         "task_seconds": None,
     }
     sid = None
